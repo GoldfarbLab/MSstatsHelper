@@ -32,16 +32,18 @@ sites <- sortIdentifiers(sites)
 localized.sites <- sites %>% filter(`Localization prob` >= 0.75)
 
 # formatting
-global_evidence <- prepareForMSstats(localized.sites, evidence)
+formatted_data <- prepareForMSstats(localized.sites, evidence)
+new_evidence <- global_evidence[[1]]
+new_sites <- global_evidence[[2]]
+
+
+
+matching.localized.sites <- new_sites %>% filter(`Sorted Proteins` %in% new_evidence$`Sorted Proteins`)
+matching.localized.sites.gene <- new_sites %>% filter(`Sorted Gene names` %in% new_evidence$`Sorted Gene names`)
+
+not.matching.localized.sites.gene <- new_sites %>% filter(!(`Gene names` %in% new_evidence$`Gene names`))
 
 
 
 
-
-matching.localized.sites <- localized.sites %>% filter(`Proteins` %in% evidence$Proteins)
-matching.sites <- sites %>% filter(`Proteins` %in% evidence$Proteins)
-
-matching.localized.sites.gene <- localized.sites %>% filter(`Gene names` %in% evidence$`Gene names`)
-matching.sites.gene <- sites %>% filter(`Gene names` %in% evidence$`Gene names`)
-
-not.matching.localized.sites.gene <- localized.sites %>% filter(!(`Gene names` %in% evidence$`Gene names`))
+mapping <- read_tsv("~/Box/CellBio-GoldfarbLab/Data/Annotations/uniprot_mapping.tsv.zip")
