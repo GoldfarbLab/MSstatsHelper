@@ -46,4 +46,4 @@ not.matching.localized.sites.gene <- new_sites %>% filter(!(`Gene names` %in% ne
 
 
 
-mapping <- read_tsv("~/Box/CellBio-GoldfarbLab/Data/Annotations/uniprot_mapping.tsv.zip")
+#mapping <- read_tsv("~/Box/CellBio-GoldfarbLab/Data/Annotations/uniprot_mapping.tsv.zip")
