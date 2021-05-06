@@ -27,20 +27,24 @@ sortMultiColumn <- function(x) {
 }
 
 update.gene.names <- function(df) {
+  # getting human and mouse gene-protein map
   map <- invisible(genes.map)
 
+  # removing isoform identifiers
   df <- df %>%
     mutate(pid = row_number(), listed_proteins = str_split(`Proteins`, ";")) %>%
     unnest(listed_proteins) %>%
     mutate(listed_proteins = sapply(str_split(listed_proteins, "-"), `[[`, 1))
   df <- distinct(df)
 
-
+  # adding in new gene names
   df <- df %>% left_join(map, by = c("listed_proteins" = "Entry"))
 
+  # reforming MQ list structure
   converted.list <- df %>% group_by(pid) %>%
     summarize(`Gene names` = str_c(unique(`Gene names`), collapse = ';'))
 
+  # putting df back in the same form
   df <- df %>%
     left_join(converted.list, by = c("pid")) %>%
     rename(`Gene names` = `Gene names.y`) %>%
@@ -50,9 +54,7 @@ update.gene.names <- function(df) {
 }
 
 prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_global_nonMissing=2) {
-  phosphosites <- localized.sites
-  global_evidence <- evidence
-
+  # updating gene names
   phosphosites <- update.gene.names(phosphosites)
   global_evidence <- update.gene.names(global_evidence)
 
@@ -143,28 +145,36 @@ addSitesToNames <- function(ids, positions, amino_acid) {
 }
 
 addSitesToGeneNames <- function(genes, ids, positions, amino_acid) {
+  # getting same map as before
   map <- invisible(genes.map)
+
+  # forming df from lists
   phos_genes <- bind_cols(list(genes, ids, positions, amino_acid)) %>%
     rename(genes = "...1", Proteins = "...2", Positions = "...3", aa = "...4")
 
+  # getting one protein and position per row
   phos_genes <- phos_genes %>%
     mutate(rid = row_number()) %>%
     mutate(Positions = str_split(Positions, ';'),
            Proteins = str_split(Proteins, ";")) %>%
     unnest(c(Positions, Proteins))
 
+  # making new row for proteins in map format
   phos_genes <- phos_genes %>%
     mutate(Entry = sapply(str_split(Proteins, "-"), `[[`, 1))
 
+  # joining UpdatedGeneName_ProteinName_aaPosition
   phos_genes <- phos_genes %>% left_join(map, by = c("Entry")) %>%
     mutate(ids_with_sites = str_c(gene.name,"_",
                                   Proteins,"_",
                                   aa, Positions))
 
+  # putting df back into list form
   phos_genes <- phos_genes %>%
     group_by(rid) %>%
     summarize(ids_with_sites = str_c(ids_with_sites, collapse = ';'))
 
+  # returning only id column
   return(phos_genes$ids_with_sites)
 }
 
