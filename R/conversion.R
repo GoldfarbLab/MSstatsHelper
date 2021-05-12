@@ -17,7 +17,7 @@
 sortIdentifiers <- function(df) {
   df <- df %>%
     mutate("Sorted Proteins" = sortMultiColumn(Proteins)) %>%
-    mutate("Sorted Gene names" = sortMultiColumn(`Gene names`))
+    mutate("Sorted Gene names" = sortMultiColumn(Gene.names))
 
   return(df)
 }
@@ -42,28 +42,35 @@ update.gene.names <- function(df) {
 
   # reforming MQ list structure
   converted.list <- df %>% group_by(pid) %>%
-    summarize(`Gene names` = str_c(unique(`Gene names`), collapse = ';'))
+    summarize(Gene.names = str_c(unique(Gene.names), collapse = ';'))
+
+  if(nrow(converted.list) == 0){
+    message("Error: No genes matched to human or mouse. Cannot convert.")
+  }
 
   # putting df back in the same form
   df <- df %>%
     left_join(converted.list, by = c("pid")) %>%
-    rename(`Gene names` = `Gene names.y`) %>%
-    select(-pid, -listed_proteins, -`Gene names.x`, - gene.name)
+    rename(Gene.names = `Gene.names.y`) %>%
+    select(-pid, -listed_proteins, -`Gene.names.x`, -gene.name)
 
   return(distinct(df))
 }
 
 prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_global_nonMissing=2) {
   # updating gene names
+  message("**Updating gene names")
   phosphosites <- update.gene.names(phosphosites)
   global_evidence <- update.gene.names(global_evidence)
 
   # order protein IDs and gene names
+  message("**Sorting gene and protein names")
   global_evidence <- sortIdentifiers(global_evidence)
   phosphosites <- sortIdentifiers(phosphosites)
 
+  message("**Removing rows with too many missing values")
   # filter out rows with too many missing values
-  global_evidence <- global_evidence %>% filter(rowSums(across(matches("Reporter intensity corrected \\d+"), function(x) x > 0)) >= min_global_nonMissing)
+  global_evidence <- global_evidence %>% filter(rowSums(across(matches("Reporter.intensity.corrected.\\d+"), function(x) x > 0)) >= min_global_nonMissing)
   # find phosphosites with enough distinct peptides in the global data that have exact protein matches
   matching_phospho_protein <- phosphosites %>%
     inner_join(global_evidence, by = c("Sorted Proteins")) %>%
@@ -86,14 +93,14 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   not_matching_phospho <- phosphosites %>%
     filter(!id %in% matching_phospho_protein$id.x) %>%
     filter(!id %in% matching_phospho_gene$id.x) %>%
-    select(id, Proteins, `Gene names`) %>%
+    select(id, Proteins, Gene.names) %>%
     rename("id.x" = id,
            "Sorted Proteins" = Proteins,
-           "Sorted Gene names" = "Gene names") %>%
+           "Sorted Gene names" = "Gene.names") %>%
     mutate(`Sorted Gene names` = str_split(`Sorted Gene names`, ";")) %>%
     unnest(`Sorted Gene names`)
 
-
+  message("**Creating new mapping identifiers")
   # create new identifiers for global for MSstats
   # evidence that matches proteins exactly
   global_evidence_protein <- global_evidence %>%
@@ -114,17 +121,17 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   # create new identifier columns for phospho for MSstats
   phosphosites_protein <- phosphosites %>%
     filter(id %in% matching_phospho_protein$id.x) %>%
-    mutate("matched_ids" = addSitesToNames(Proteins, `Positions within proteins`, `Amino acid`)) %>%
+    mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
     mutate("matched_ids" = sortMultiColumn(matched_ids))
 
   phosphosites_genes <- phosphosites %>%
     filter(id %in% matching_phospho_gene$id.x) %>%
-    mutate("matched_ids" = addSitesToGeneNames(`Gene names`, Proteins, `Positions within proteins`, `Amino acid`)) %>%
+    mutate("matched_ids" = addSitesToGeneNames(Gene.names, Proteins, Positions.within.proteins, Amino.acid)) %>%
     mutate("matched_ids" = sortMultiColumn(matched_ids))
 
   phosphosites_no_match <- phosphosites %>%
     filter(id %in% not_matching_phospho$id.x) %>%
-    mutate("matched_ids" = addSitesToGeneNames(`Gene names`, Proteins, `Positions within proteins`, `Amino acid`)) %>%
+    mutate("matched_ids" = addSitesToGeneNames(Gene.names, Proteins, Positions.within.proteins, Amino.acid)) %>%
     mutate("matched_ids" = sortMultiColumn(matched_ids))
 
   phosphosites <- bind_rows(phosphosites_genes, phosphosites_protein, phosphosites_no_match)
@@ -149,7 +156,7 @@ addSitesToGeneNames <- function(genes, ids, positions, amino_acid) {
   map <- invisible(genes.map)
 
   # forming df from lists
-  phos_genes <- bind_cols(list(genes, ids, positions, amino_acid)) %>%
+  phos_genes <- bind_cols(list(genes, ids, positions, amino_acid)) %>% ### is loud
     rename(genes = "...1", Proteins = "...2", Positions = "...3", aa = "...4")
 
   # getting one protein and position per row
