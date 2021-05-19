@@ -59,16 +59,16 @@ update.gene.names <- function(df) {
 
 prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_global_nonMissing=2) {
   # updating gene names
-  message("**Updating gene names")
+  message("** Updating gene names")
   phosphosites <- update.gene.names(phosphosites)
   global_evidence <- update.gene.names(global_evidence)
 
   # order protein IDs and gene names
-  message("**Sorting gene and protein names")
+  message("** Sorting gene and protein names")
   global_evidence <- sortIdentifiers(global_evidence)
   phosphosites <- sortIdentifiers(phosphosites)
 
-  message("**Removing rows with too many missing values")
+  message("** Removing rows with too many missing values")
   # filter out rows with too many missing values
   global_evidence <- global_evidence %>% filter(rowSums(across(matches("Reporter.intensity.corrected.\\d+"), function(x) x > 0)) >= min_global_nonMissing)
   # find phosphosites with enough distinct peptides in the global data that have exact protein matches
@@ -100,7 +100,7 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
     mutate(`Sorted Gene names` = str_split(`Sorted Gene names`, ";")) %>%
     unnest(`Sorted Gene names`)
 
-  message("**Creating new mapping identifiers")
+  message("** Creating new mapping identifiers")
   # create new identifiers for global for MSstats
   # evidence that matches proteins exactly
   global_evidence_protein <- global_evidence %>%
@@ -181,6 +181,7 @@ addSitesToGeneNames <- function(genes, ids, positions, amino_acid) {
     group_by(rid) %>%
     summarize(ids_with_sites = str_c(ids_with_sites, collapse = ';'))
 
+  phos_genes <- unique(phos_genes)
   # returning only id column
   return(phos_genes$ids_with_sites)
 }
