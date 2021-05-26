@@ -26,35 +26,74 @@ sortMultiColumn <- function(x) {
   sapply(str_split(x, ";"), function(p) str_c(sort(p), collapse=";"))
 }
 
+sortByPattern <- function(x, pattern) {
+  # matched by gene pattern: "(^[^_]*)_([^_]*)_([^_]*)"
+  # match by protein pattern: "(^[^_]*)_([^_]*)"
+  y <- sapply(str_split(x, ';'), function(x){ # take in one row of annotated names
+    # print(x)
+    df <- as.data.frame(str_match(x, pattern)) # break a list of PTMs into gene, protein, and position
+    df <- df[order(df[,2]),] # sort by gene name only
+    return(str_c(df[,1], collapse = ';', sep = NULL))
+  })
+  return(y)
+}
+
+mapToGene <- function(x, type = ""){
+  map <- invisible(map)
+
+  mapped_genes <- sapply(str_split(x, ";"), function(protein_ids) { ### creates list of protein names
+
+    genes <- sapply(protein_ids, function(protein_id) { # individual protein level
+      mapped <- map %>% filter(Entry %in% str_match(protein_id, "^[^-]*")) %>% select(`gene.name`) # find gene name
+      mapped <- mapped %>% filter(gene.name != "" & gene.name != " " &
+                                    gene.name != "NULL" & gene.name != "character(0)" &
+                                    !is.na(gene.name))
+
+      mapped <- mapped %>% mutate(gene.name = as.character(gene.name))
+      return(str_c(mapped, collapse = ";", sep = NULL)) # returns list of genes for one protein
+    })
+
+    if(type == "unique"){
+      genes <- unique(genes)
+    }
+
+    genes <- genes[genes != "" & genes != " " & genes != "character(0)"]
+    print(genes)
+    # print(genes)
+    return(str_c(genes, collapse = ";", sep = NULL)) # returns list of genes for one row of proteins
+  })
+  # print(mapped_genes)
+  return(mapped_genes)
+}
+
 update.gene.names <- function(df) {
-  # getting human and mouse gene-protein map
-  map <- invisible(genes.map)
-
-  # removing isoform identifiers
   df <- df %>%
-    mutate(pid = row_number(), listed_proteins = str_split(`Proteins`, ";")) %>%
-    unnest(listed_proteins) %>%
-    mutate(listed_proteins = sapply(str_split(listed_proteins, "-"), `[[`, 1))
-  df <- distinct(df)
+    mutate(Gene.names = mapToGene(Proteins, "unique"))
 
-  # adding in new gene names
-  df <- df %>% left_join(map, by = c("listed_proteins" = "Entry"))
+  return(df)
+}
 
-  # reforming MQ list structure
-  converted.list <- df %>% group_by(pid) %>%
-    summarize(Gene.names = str_c(unique(Gene.names), collapse = ';'))
+addSitesToNames <- function(ids, positions, amino_acid) {
+  split_ids = str_split(ids, ";")
+  split_positions = str_split(positions, ";")
 
-  if(nrow(converted.list) == 0){
-    message("Error: No genes matched to human or mouse. Cannot convert.")
-  }
+  ids_with_sites <- mapply(function(s_ids, s_pos, aa) {
+    str_c(s_ids, "_", aa, s_pos, collapse=";")
+  }, s_ids=split_ids, s_pos=split_positions, aa=amino_acid)
 
-  # putting df back in the same form
-  df <- df %>%
-    left_join(converted.list, by = c("pid")) %>%
-    rename(Gene.names = `Gene.names.y`) %>%
-    select(-pid, -listed_proteins, -`Gene.names.x`, -gene.name)
+  return(ids_with_sites)
+}
 
-  return(distinct(df))
+addSitesToGeneNames <- function(ids, positions, amino_acid) {
+  split_ids <- str_split(ids, ";")
+  split_genes <- str_split(mapToGene(ids), ";") # returns redundant list of genes but it's unsorted
+
+  genes_and_ids <- mapply(function(protein, gene) {
+    str_c(gene, "_", protein, collapse = ';')
+  }, protein = split_ids, gene = split_genes)
+
+  # returning only id column
+  return(addSitesToNames(genes_and_ids, positions, amino_acid))
 }
 
 prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_global_nonMissing=2) {
@@ -68,25 +107,27 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   global_evidence <- sortIdentifiers(global_evidence)
   phosphosites <- sortIdentifiers(phosphosites)
 
+  # global_evidence <- global_evidence %>% mutate(`Sorted Gene names` = Gene.names, `Sorted Proteins` = Proteins)
+  # phosphosites <- phosphosites %>% mutate(`Sorted Gene names` = Gene.names, `Sorted Proteins` = Proteins)
+
   message("** Removing rows with too many missing values")
   # filter out rows with too many missing values
   global_evidence <- global_evidence %>% filter(rowSums(across(matches("Reporter.intensity.corrected.\\d+"), function(x) x > 0)) >= min_global_nonMissing)
   # find phosphosites with enough distinct peptides in the global data that have exact protein matches
-  matching_phospho_protein <- phosphosites %>%
+
+  message("** Classifying identifer type")
+   matching_phospho_protein <- phosphosites %>%
     inner_join(global_evidence, by = c("Sorted Proteins")) %>%
+    filter(`Sorted Proteins` != "" & "Sorted Proteins" != " " & !is.na("Sorted Proteins")) %>%
     group_by(id.x, `Sorted Proteins`) %>%
     summarize(num_matches = n()) %>%
     filter(num_matches >= min_match)
 
-  # remove global data that was used in the previous so we don't double count them
-  #global_evidence <- global_evidence %>%
-  #  filter(!id %in% matching_phospho_protein$id.y)
-
   # find phosphosites that didn't pass the previous filter, but do have gene-level matches
   matching_phospho_gene <- phosphosites %>%
     filter(!id %in% matching_phospho_protein$id.x) %>%
-    filter("Sorted Gene names" != "") %>%
     inner_join(global_evidence, by = c("Sorted Gene names")) %>%
+    filter(`Sorted Gene names` != "" & "Sorted Gene names" != " " & !is.na("Sorted Gene names")) %>%
     group_by(id.x, `Sorted Gene names`) %>%
     summarize(num_matches = n())
 
@@ -96,9 +137,7 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
     select(id, Proteins, Gene.names) %>%
     rename("id.x" = id,
            "Sorted Proteins" = Proteins,
-           "Sorted Gene names" = "Gene.names") %>%
-    mutate(`Sorted Gene names` = str_split(`Sorted Gene names`, ";")) %>%
-    unnest(`Sorted Gene names`)
+           "Sorted Gene names" = "Gene.names")
 
   message("** Creating new mapping identifiers")
   # create new identifiers for global for MSstats
@@ -119,97 +158,25 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   global_evidence <- bind_rows(global_evidence_gene, global_evidence_protein, global_evidence_no_match)
 
   # create new identifier columns for phospho for MSstats
+  message("** updating identifiers in phosphosites table")
   phosphosites_protein <- phosphosites %>%
     filter(id %in% matching_phospho_protein$id.x) %>%
     mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
-    mutate("matched_ids" = sortMultiColumn(matched_ids))
+    mutate("matched_ids" = sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)"))
 
   phosphosites_genes <- phosphosites %>%
     filter(id %in% matching_phospho_gene$id.x) %>%
-    mutate("matched_ids" = addSitesToGeneNames(Gene.names, Proteins, Positions.within.proteins, Amino.acid)) %>%
-    mutate("matched_ids" = sortMultiColumn(matched_ids))
+    mutate("matched_ids" = addSitesToGeneNames(Proteins, Positions.within.proteins, Amino.acid))
+  phosphosites_genes <- phosphosites_genes %>%
+    mutate("matched_ids" = sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)_([^_]*)"))
 
   phosphosites_no_match <- phosphosites %>%
     filter(id %in% not_matching_phospho$id.x) %>%
-    mutate("matched_ids" = addSitesToGeneNames(Gene.names, Proteins, Positions.within.proteins, Amino.acid)) %>%
-    mutate("matched_ids" = sortMultiColumn(matched_ids))
+    mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
+    mutate("matched_ids" =  sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)")) ## this sorting doesn't make the same result as the sorted protein column
 
   phosphosites <- bind_rows(phosphosites_genes, phosphosites_protein, phosphosites_no_match)
 
   return(list(global_evidence, phosphosites))
 
 }
-
-addSitesToNames <- function(ids, positions, amino_acid) {
-  split_ids = str_split(ids, ";")
-  split_positions = str_split(positions, ";")
-
-  ids_with_sites <- mapply(function(s_ids, s_pos, aa) {
-    str_c(s_ids, "_", aa, s_pos, collapse=";")
-  }, s_ids=split_ids, s_pos=split_positions, aa=amino_acid)
-
-  return(ids_with_sites)
-}
-
-addSitesToGeneNames <- function(genes, ids, positions, amino_acid) {
-  # getting same map as before
-  map <- invisible(genes.map)
-
-  # forming df from lists
-  phos_genes <- bind_cols(list(genes, ids, positions, amino_acid)) %>% ### is loud
-    rename(genes = "...1", Proteins = "...2", Positions = "...3", aa = "...4")
-
-  # getting one protein and position per row
-  phos_genes <- phos_genes %>%
-    mutate(rid = row_number()) %>%
-    mutate(Positions = str_split(Positions, ';'),
-           Proteins = str_split(Proteins, ";")) %>%
-    unnest(c(Positions, Proteins))
-
-  # making new row for proteins in map format
-  phos_genes <- phos_genes %>%
-    mutate(Entry = sapply(str_split(Proteins, "-"), `[[`, 1))
-
-  # joining UpdatedGeneName_ProteinName_aaPosition
-  phos_genes <- phos_genes %>% left_join(map, by = c("Entry")) %>%
-    mutate(ids_with_sites = str_c(gene.name,"_",
-                                  Proteins,"_",
-                                  aa, Positions))
-
-  # putting df back into list form
-  phos_genes <- phos_genes %>%
-    group_by(rid) %>%
-    summarize(ids_with_sites = str_c(ids_with_sites, collapse = ';'))
-
-  phos_genes <- unique(phos_genes)
-  # returning only id column
-  return(phos_genes$ids_with_sites)
-}
-
-
-# addSitesToGeneNames <- function(genes, ids, positions, amino_acid) {
-#   split_genes = str_split(genes, ";")
-#   split_ids = str_split(ids, ";")
-#   split_positions = str_split(positions, ";")
-#
-#   ids_with_sites <- mapply(function(s_genes, s_ids, s_pos, aa) {
-#     unique_ids <- unique(sapply(s_ids, function(x) str_replace(x, "-.*", "")))
-#
-#     unique_indices = sapply(unique_ids, function(x) min(which(str_detect(s_ids, x))))
-#
-#     #if (length(s_genes) != length(unique_indices)) {
-#     #  print(s_genes)
-#     #  print(s_ids)
-#     #  print(unique_ids)
-#     #  print(unique_indices)
-#     #}
-#
-#     str_c(s_genes, "_", s_ids[unique_indices], "_", aa, s_pos[unique_indices], collapse=";")
-#   }, s_genes=split_genes, s_ids=split_ids, s_pos=split_positions, aa=amino_acid)
-#
-#   return(ids_with_sites)
-# }
-
-
-
-
