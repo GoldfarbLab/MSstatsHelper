@@ -23,6 +23,7 @@ sortIdentifiers <- function(df) {
 }
 
 sortMultiColumn <- function(x) {
+  # pboptions(type = "timer", char = "=", style = 3)
   sapply(str_split(x, ";"), function(p) str_c(sort(p), collapse=";"))
 }
 
@@ -30,6 +31,7 @@ sortByPattern <- function(x, pattern) {
   # matched by gene pattern: "(^[^_]*)_([^_]*)_([^_]*)"
   # match by protein pattern: "(^[^_]*)_([^_]*)"
 
+  # pboptions(type = "timer", char = "=", style = 3)
   y <- sapply(str_split(x, ';'), function(x){ # take in one row of annotated names
     # print(x)
     df <- as.data.frame(str_match(x, pattern)) # break a list of PTMs into gene, protein, and position
@@ -43,6 +45,7 @@ mapToGene <- function(x, type = ""){
   map <- invisible(mapped)
   setkey(map, Entry)
 
+  pboptions(type = "timer", char = "=", style = 3)
   mapped_genes <- pbsapply(str_split(x, ";"), function(protein_ids) ## pbsapply instead of sapply so that there is a progress bar
   { ### creates list of protein names
 
@@ -99,6 +102,7 @@ addSitesToGeneNames <- function(ids, positions, amino_acid) {
   split_ids <- str_split(ids, ";")
   split_genes <- str_split(mapToGene(ids), ";") # returns redundant list of genes but it's unsorted
 
+  # message("\n== Getting gene names for gene based identifiers")
   genes_and_ids <- mapply(function(protein, gene) {
     str_c(gene, "_", protein, collapse = ';')
   }, protein = split_ids, gene = split_genes)
@@ -109,24 +113,26 @@ addSitesToGeneNames <- function(ids, positions, amino_acid) {
 
 prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_global_nonMissing=2) {
   # updating gene names
-  message("** Updating gene names")
-  phosphosites <- update.gene.names(sites)
-  global_evidence <- update.gene.names(evidence)
+  message("\n== Updating gene names for phosphosites file")
+  phosphosites <- update.gene.names(phosphosites)
+  message("\n== Updating gene names for global evidence file")
+  global_evidence <- update.gene.names(global_evidence)
 
   # order protein IDs and gene names
-  message("** Sorting gene and protein names")
+  message("\n== Sorting gene and protein names for the global evidence file")
   global_evidence <- sortIdentifiers(global_evidence)
+  message("\n== Sorting gene and protein names for the phosphosites file")
   phosphosites <- sortIdentifiers(phosphosites)
 
   # global_evidence <- global_evidence %>% mutate(`Sorted Gene names` = Gene.names, `Sorted Proteins` = Proteins)
   # phosphosites <- phosphosites %>% mutate(`Sorted Gene names` = Gene.names, `Sorted Proteins` = Proteins)
 
-  message("** Removing rows with too many missing values")
+  message("\n** Removing rows with too many missing values from evidence file")
   # filter out rows with too many missing values
   global_evidence <- global_evidence %>% filter(rowSums(across(matches("Reporter.intensity.corrected.\\d+"), function(x) x > 0)) >= min_global_nonMissing)
   # find phosphosites with enough distinct peptides in the global data that have exact protein matches
 
-  message("** Classifying identifer type")
+  message("\n** Classifying identifer type")
    matching_phospho_protein <- phosphosites %>%
     inner_join(global_evidence, by = c("Sorted Proteins")) %>%
     filter(`Sorted Proteins` != "" & "Sorted Proteins" != " " & !is.na("Sorted Proteins")) %>%
@@ -150,7 +156,7 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
            "Sorted Proteins" = Proteins,
            "Sorted Gene names" = "Gene.names")
 
-  message("** Creating new mapping identifiers")
+  message("\n** Creating new mapping identifiers")
   # create new identifiers for global for MSstats
   # evidence that matches proteins exactly
   global_evidence_protein <- global_evidence %>%
@@ -172,7 +178,7 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   global_evidence <- bind_rows(global_evidence_gene, global_evidence_protein, global_evidence_no_match)
 
   # create new identifier columns for phospho for MSstats
-  message("** updating identifiers in phosphosites table")
+  message("\n** Updating identifiers in phosphosites table")
   phosphosites_protein <- phosphosites %>%
     filter(id %in% matching_phospho_protein$id.x) %>%
     mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
@@ -190,6 +196,8 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
 
   phosphosites <- bind_rows(phosphosites_genes, phosphosites_protein, phosphosites_no_match)
 
+  global_evidence <- global_evidence %>% select(-Proteins) %>% rename(Proteins = matched_ids)
+  phosphosites <- phosphosites %>% select(-Proteins) %>% rename(Proteins = matched_ids)
   return(list(global_evidence, phosphosites))
 
 }
