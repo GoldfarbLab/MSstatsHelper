@@ -1,15 +1,16 @@
-#' Sorts the Proteins and Gene names columns in alphanumeric order
+#' Updates the Gene names and sorts the Proteins and Gene names columns in alphanumeric order
 #'
 #' @param df tibble or data frame with Proteins and Gene names columns, e.g. evidence or sites tables from MaxQuant
 #'
 #' @export
 #' @examples
 #' \dontrun{
-#' evidence <- read_tsv("evidence.txt")
-#' evidence <- sortIdentifiers(evidence)
+#' evidence <- read.delim("evidence.txt", sep = '\t')
+#' sites <- read.delim("Phospho (STY)Sites.txt", sep = '\t')
 #'
-#' sites <- read_tsv("Phospho (STY)Sites.txt")
-#' sites <- sortIdentifiers(sites)
+#' formatted_data <- prepareForMSstats(sites, evidence)
+#' new_evidence <- formatted_data[[1]]
+#' new_sites <- formatted_data[[2]]
 #' }
 #'
 #' @import dplyr
@@ -23,7 +24,6 @@ sortIdentifiers <- function(df) {
 }
 
 sortMultiColumn <- function(x) {
-  # pboptions(type = "timer", char = "=", style = 3)
   sapply(str_split(x, ";"), function(p) str_c(sort(p), collapse=";"))
 }
 
@@ -31,7 +31,6 @@ sortByPattern <- function(x, pattern) {
   # matched by gene pattern: "(^[^_]*)_([^_]*)_([^_]*)"
   # match by protein pattern: "(^[^_]*)_([^_]*)"
 
-  # pboptions(type = "timer", char = "=", style = 3)
   y <- sapply(str_split(x, ';'), function(x){ # take in one row of annotated names
     # print(x)
     df <- as.data.frame(str_match(x, pattern)) # break a list of PTMs into gene, protein, and position
@@ -43,41 +42,37 @@ sortByPattern <- function(x, pattern) {
 
 mapToGene <- function(x, type = ""){
   map <- invisible(mapped)
-  setkey(map, Entry)
+  hash <- hash(keys = map$Entry, values = map$gene.name)
 
   pboptions(type = "timer", char = "=", style = 3)
   mapped_genes <- pbsapply(str_split(x, ";"), function(protein_ids) ## pbsapply instead of sapply so that there is a progress bar
   { ### creates list of protein names
 
-    genes <- sapply(protein_ids, function(protein_id)
+    genes <- sapply(str_match(protein_ids, "^[^-]*"), function(protein_id)
     { # individual protein level
-      # mapped <- map %>% filter(Entry %in% str_match(protein_id, "^[^-]*")) %>% select(`gene.name`) # find gene name, step to be chagned to a hash sort
-      protein_id <- str_match(protein_id, "^[^-]*") # retrieves canonical protein name
-      mapped_protein <- map[.(protein_id)] # maybe a hash table that uses the Entry (protein name) as the key
-      mapped_protein <- mapped_protein %>% filter(gene.name != "" & gene.name != " " & # cleaning the non-matches
-                                    gene.name != "NULL" & gene.name != "character(0)" &
-                                    !is.null(gene.name) &
-                                    !is.na(gene.name))
-      return(str_c(as.character(mapped_protein$gene.name), collapse = ";", sep = NULL)) # returns list of genes for one protein
+      if(protein_id == " " | protein_id == ""){return("")}
+      mapped_protein <- hash[[protein_id]] # searches hash table
 
+      mapped_protein <- mapped_protein[mapped_protein != "" & mapped_protein != " " &
+                                         mapped_protein != "character(0)" & mapped_protein != "NULL"]
+
+      return(as.character(mapped_protein)) # returns gene
     })
 
+    # print(genes)
+
     if(type == "unique")
-    { # for use in the Gene.names column, not for apending PTMs to name
+    { # for use in the Gene.names column, not for appending PTMs to name
       genes <- unique(genes)
     }
 
     genes <- genes[genes != "" & genes != " " & genes != "character(0)" & genes != "NULL"] # cleaning out non-matches
 
-    if(length(genes) == 0)
-    {
-      return("")
-    }
-    # print(genes)
     return(str_c(genes, collapse = ";", sep = NULL)) # returns list of genes for one row of proteins
   })
 
-  return(mapped_genes)
+  mapped_genes <- mapped_genes %>% replace_na("")
+  return(trimws(mapped_genes))
 }
 
 update.gene.names <- function(df) {
@@ -119,9 +114,9 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
   global_evidence <- update.gene.names(global_evidence)
 
   # order protein IDs and gene names
-  message("\n== Sorting gene and protein names for the global evidence file")
+  message("\n** Sorting gene and protein names for the global evidence file")
   global_evidence <- sortIdentifiers(global_evidence)
-  message("\n== Sorting gene and protein names for the phosphosites file")
+  message("\n** Sorting gene and protein names for the phosphosites file")
   phosphosites <- sortIdentifiers(phosphosites)
 
   # global_evidence <- global_evidence %>% mutate(`Sorted Gene names` = Gene.names, `Sorted Proteins` = Proteins)
@@ -198,6 +193,6 @@ prepareForMSstats <- function(phosphosites, global_evidence, min_match=2, min_gl
 
   global_evidence <- global_evidence %>% select(-Proteins) %>% rename(Proteins = matched_ids)
   phosphosites <- phosphosites %>% select(-Proteins) %>% rename(Proteins = matched_ids)
-  return(list(global_evidence, phosphosites))
+  return(list("GlobalEvidence" = global_evidence, "Sites" = phosphosites))
 
 }
