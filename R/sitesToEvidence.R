@@ -32,10 +32,24 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
     )
   }
 
+  cols <- as_tibble(str_match(colnames(sites), 'Reporter.intensity.([0-9]*)___([0-9]*)')) %>%
+    mutate(output_column_name = str_c("Reporter.intensity.",V2)) %>%
+    drop_na()
+
+  for(i in 1:length(unique(cols$V2))){
+    small_cols <- cols %>% filter(V2 == as.character(i))
+    sites <- sites %>% mutate(
+      !!as.character(small_cols[1,4]) :=
+        !!sym(as.character(small_cols[1,1])) +
+        !!sym(as.character(small_cols[2,1])) +
+        !!sym(as.character(small_cols[3,1]))
+    )
+  }
+
   remove <- colnames(sites)[grep("___", colnames(sites))]
   sites <- sites %>% select(-all_of(remove))
 
-  keep <- colnames(sites)[grep("Reporter.intensity.corrected.", colnames(sites))]
+  keep <- colnames(sites)[grep("Reporter.intensity.", colnames(sites))]
   sites <- sites %>% select(all_of(keep), Evidence.IDs, id, Proteins)
 
   ##############################################################################
