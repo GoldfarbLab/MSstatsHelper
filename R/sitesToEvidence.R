@@ -50,7 +50,7 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
   sites <- sites %>% select(-all_of(remove))
 
   keep <- colnames(sites)[grep("Reporter.intensity.", colnames(sites))]
-  sites <- sites %>% select(all_of(keep), Evidence.IDs, id, Proteins)
+  sites <- sites %>% select(all_of(keep), Evidence.IDs, id, Proteins, Localization.prob, Protein.group.IDs)
 
   ##############################################################################
   ### merge sites and evidence
@@ -63,7 +63,7 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
 
   remove <- colnames(evidence)[grep("Reporter.intensity.", colnames(evidence))]
   evidence <- evidence %>%
-    select(-all_of(remove), -Proteins) %>%
+    select(-all_of(remove), -Proteins, -Protein.group.IDs) %>%
     # select('Modified.sequence', 'Raw.file', 'Phospho..STY..site.IDs', 'id') %>%
     rename('Evidence.IDs' = 'id')
 
@@ -75,18 +75,20 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
   input <- sites %>% left_join(evidence, by = c("Phospho..STY..site.IDs", "Evidence.IDs"))
   input <- input %>%
     group_by(Phospho..STY..site.IDs) %>%
-    arrange(PEP, .by_group = TRUE) %>%
+    arrange(Localization.prob, .by_group = TRUE) %>%
     slice(1)
 
   input <- input %>%
     rename(id = Phospho..STY..site.IDs) %>%
     select(-Evidence.IDs) %>%
-    unique()
+    unique() %>%
+    ungroup()
 
   ##############################################################################
   ### update Evidence ID in the proteinGroups table
   ##############################################################################
   map <- input %>%
+    # filter(!str_detect(Protein.group.IDs, ';')) %>%
     select(Protein.group.IDs, id) %>%
     mutate(Protein.group.IDs = str_split(Protein.group.IDs, ';')) %>%
     unnest(Protein.group.IDs) %>%
