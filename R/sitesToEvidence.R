@@ -15,73 +15,96 @@
 
 sitesToEvidence <- function(sites, evidence, proteinGroups) {
 
+  sites <- formatColNames(sites)
+  evidence <- formatColNames(evidence)
+  proteinGroups <- formatColNames(proteinGroups)
+
   ##############################################################################
   ### sum together phosphosites into one intensity column
   ##############################################################################
-  cols <- as_tibble(str_match(colnames(sites), 'Reporter.intensity.corrected.([0-9]*)___([0-9]*)')) %>%
-    mutate(output_column_name = str_c("Reporter.intensity.corrected.",V2)) %>%
-    drop_na()
+  ## this all worked for singular TMT plexes but doesn't work for multiple/multiple experiments.
+  # I need to transform the separate columns for experiment abundances into rows with the experiment labeled
+  # for intensity, intensity corrected, SN, Is.missing
 
-  for(i in 1:length(unique(cols$V2))){
-    small_cols <- cols %>% filter(V2 == as.character(i))
-    sites <- sites %>% mutate(
-      !!as.character(small_cols[1,4]) :=
-        !!sym(as.character(small_cols[1,1])) +
-        !!sym(as.character(small_cols[2,1])) +
-        !!sym(as.character(small_cols[3,1]))
-    )
+  r.i.cols <- colnames(sites)[grep("Reporter\\.intensity\\.([0-9]*)\\.", colnames(sites))]
+  experiments <- unique(str_match(r.i.cols, pattern = "(Reporter\\.intensity\\.([0-9]*)\\.)(.*)(___([0-9]*))")[,4])
+  channels <- unique(str_match(r.i.cols, pattern = "(Reporter\\.intensity\\.([0-9]*)\\.)(.*)(___([0-9]*))")[,3])
+
+  new.intensities <- list()
+
+  for(i in 1:length(channels)){
+
+    # Grab column names for this particular channel
+    sn.cols <- colnames(sites)[grep(str_c("SN\\.", channels[i], "\\."), colnames(sites))]
+    is.missing.cols <- colnames(sites)[grep(str_c("Is\\.missing\\.", channels[i], '\\.'), colnames(sites))]
+    r.i.c.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.corrected\\.", channels[i], "\\."), colnames(sites))]
+    r.i.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.", channels[i],"\\."), colnames(sites))]
+
+    SN.col <- sym(str_c("SN.", channels[i]))
+    filter.col <- sym(str_c("Is.missing.", channels[i]))
+    reporter.corr.col <- sym(str_c("Reporter.intensity.corrected.", channels[i]))
+    reporter.col <- sym(str_c("Reporter.intensity.", channels[i]))
+
+    new.intensities[[i]] <- sites %>%
+      select(id, all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols)) %>%
+      pivot_longer(cols = c(all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols)),
+                   values_to = "Value",
+                   names_to = 'old.name') %>%
+      mutate(Experiment = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,4],
+             Column.type = str_c(str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,2], ".", channels[i]),
+             Phosphosite = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,5]) %>%
+      select(-old.name) %>%
+      pivot_wider(names_from = Column.type, values_from = Value) %>%
+      # filter(!!filter.col == 0) %>%
+      group_by(Experiment, id) %>%
+      summarise(!!SN.col := sum(!!SN.col),
+                !!reporter.col := sum(!!reporter.col),
+                !!reporter.corr.col := sum(!!reporter.corr.col),
+                !!filter.col := sum(!!filter.col)) %>%
+      ungroup() %>%
+      filter(!! rlang::sym(filter.col) < 3)
   }
 
-  cols <- as_tibble(str_match(colnames(sites), 'Reporter.intensity.([0-9]*)___([0-9]*)')) %>%
-    mutate(output_column_name = str_c("Reporter.intensity.",V2)) %>%
-    drop_na()
-
-  for(i in 1:length(unique(cols$V2))){
-    small_cols <- cols %>% filter(V2 == as.character(i))
-    sites <- sites %>% mutate(
-      !!as.character(small_cols[1,4]) :=
-        !!sym(as.character(small_cols[1,1])) +
-        !!sym(as.character(small_cols[2,1])) +
-        !!sym(as.character(small_cols[3,1]))
-    )
+  updated <- new.intensities[[1]]
+  for(i in 2:(length(channels))){
+    updated <- updated %>%
+      full_join(new.intensities[[i]], by = c('id', 'Experiment'))
   }
 
-  remove <- colnames(sites)[grep("___", colnames(sites))]
-  sites <- sites %>% select(-all_of(remove))
+  keep <- c(colnames(updated)[grep("Reporter.intensity.", colnames(updated))],
+            colnames(updated)[grep("Reporter.intensity.corrected,", colnames(updated))],
+            colnames(updated)[grep("SN.", colnames(updated))],
+            colnames(updated)[grep("Is.missing.", colnames(updated))])
 
-  keep <- colnames(sites)[grep("Reporter.intensity.", colnames(sites))]
-  sites <- sites %>% select(all_of(keep), Evidence.IDs, id, Proteins, Localization.prob, Protein.group.IDs)
+  sites <- sites %>%
+    left_join(updated, by = c('id')) %>%
+    select(all_of(keep), Evidence.IDs, id, Proteins, Localization.prob, Protein.group.IDs, Experiment)
 
   ##############################################################################
   ### merge sites and evidence
   ##############################################################################
   sites <- sites %>%
-    rename('Phospho..STY..site.IDs' = 'id') %>%
-    mutate(Evidence.IDs = str_split(Evidence.IDs, ';')) %>%
-    unnest(Evidence.IDs) %>%
-    mutate(Evidence.IDs = as.integer(Evidence.IDs))
+    rename('Phospho.STY.site.IDs' = 'id') %>%
+    separate_rows(Evidence.IDs, sep = ';', convert=TRUE)
 
   remove <- colnames(evidence)[grep("Reporter.intensity.", colnames(evidence))]
   evidence <- evidence %>%
-    select(-all_of(remove), -Proteins, -Protein.group.IDs) %>%
+    select(-all_of(remove), -all_of(keep), -Proteins, -Protein.group.IDs) %>%
     # select('Modified.sequence', 'Raw.file', 'Phospho..STY..site.IDs', 'id') %>%
-    rename('Evidence.IDs' = 'id')
+    rename('Evidence.IDs' = 'id') %>%
+    separate_rows(Phospho.STY.site.IDs, sep = ';', convert = TRUE)
 
-  evidence <- evidence %>%
-    mutate(Phospho..STY..site.IDs = str_split(Phospho..STY..site.IDs, ';')) %>%
-    unnest(Phospho..STY..site.IDs) %>%
-    mutate(Phospho..STY..site.IDs = as.integer(Phospho..STY..site.IDs))
 
-  input <- sites %>% left_join(evidence, by = c("Phospho..STY..site.IDs", "Evidence.IDs"))
+  input <- sites %>% left_join(evidence, by = c("Phospho.STY.site.IDs", "Evidence.IDs", "Experiment"))
   input <- input %>%
-    group_by(Phospho..STY..site.IDs) %>%
+    group_by(Phospho.STY.site.IDs, Experiment) %>%
     arrange(Localization.prob, .by_group = TRUE) %>%
-    slice(1)
+    slice(1) %>%
+    ungroup
 
-  input <- input %>%
-    rename(id = Phospho..STY..site.IDs) %>%
+  input <- input %>% ## redo IDs for table -- multiple experiments makes phosphoID redundant
+    mutate(id = row_number()) %>%
     select(-Evidence.IDs) %>%
-    unique() %>%
     ungroup()
 
   ##############################################################################
@@ -90,12 +113,8 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
   map <- input %>%
     # filter(!str_detect(Protein.group.IDs, ';')) %>%
     select(Protein.group.IDs, id) %>%
-    mutate(Protein.group.IDs = str_split(Protein.group.IDs, ';')) %>%
-    unnest(Protein.group.IDs) %>%
-    mutate(Protein.group.IDs = as.numeric(Protein.group.IDs)) %>%
-    unique()
-
-  map <- map %>%
+    separate_rows(Protein.group.IDs, sep=';', convert=TRUE) %>%
+    unique() %>%
     group_by(Protein.group.IDs) %>%
     summarize(Evidence.IDs = str_c(id, collapse = ';'))
 
