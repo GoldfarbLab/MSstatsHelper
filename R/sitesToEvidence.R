@@ -39,30 +39,35 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
     is.missing.cols <- colnames(sites)[grep(str_c("Is\\.missing\\.", channels[i], '\\.'), colnames(sites))]
     r.i.c.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.corrected\\.", channels[i], "\\."), colnames(sites))]
     r.i.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.", channels[i],"\\."), colnames(sites))]
+    loc.cols <- colnames(sites)[grep(str_c("Localization\\.prob\\."), colnames(sites))]
 
     SN.col <- sym(str_c("SN.", channels[i]))
     filter.col <- sym(str_c("Is.missing.", channels[i]))
     reporter.corr.col <- sym(str_c("Reporter.intensity.corrected.", channels[i]))
     reporter.col <- sym(str_c("Reporter.intensity.", channels[i]))
 
-    new.intensities[[i]] <- sites %>%
-      select(id, all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols)) %>%
-      pivot_longer(cols = c(all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols)),
+    new.intensities[[i]] <-  sites %>%
+      select(id, all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols), all_of(loc.cols)) %>%
+      pivot_longer(cols = c(all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols), all_of(loc.cols)),
                    values_to = "Value",
                    names_to = 'old.name') %>%
       mutate(Experiment = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,4],
+             Experiment = ifelse(is.na(Experiment), str_match(old.name, pattern = "(Localization\\.prob\\.)(.*)")[,3], Experiment),
              Column.type = str_c(str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,2], ".", channels[i]),
+             Column.type = ifelse(is.na(Column.type), 'Localization.prob', Column.type),
              Phosphosite = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,5]) %>%
+      replace_na(list(Phosphosite=1)) %>%
       select(-old.name) %>%
       pivot_wider(names_from = Column.type, values_from = Value) %>%
-      # filter(!!filter.col == 0) %>%
+      replace_na(list(Localization.prob=0)) %>%
       group_by(Experiment, id) %>%
       summarise(!!SN.col := sum(!!SN.col),
                 !!reporter.col := sum(!!reporter.col),
                 !!reporter.corr.col := sum(!!reporter.corr.col),
-                !!filter.col := sum(!!filter.col)) %>%
+                !!filter.col := sum(!!filter.col),
+                Localization.prob = max(Localization.prob)) %>% ### because each peptide has only one localization prob
       ungroup() %>%
-      filter(!! rlang::sym(filter.col) < 3)
+      filter(!!rlang::sym(filter.col) < 3)
   }
 
   updated <- new.intensities[[1]]
