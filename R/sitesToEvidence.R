@@ -32,6 +32,7 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
 
   new.intensities <- list()
 
+  pb = txtProgressBar(max=length(channels), style=3)
   for(i in 1:length(channels)){
 
     # Grab column names for this particular channel
@@ -68,7 +69,10 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
                 Localization.prob = max(Localization.prob)) %>% ### because each peptide has only one localization prob
       ungroup() %>%
       filter(!!rlang::sym(filter.col) < 3)
+
+    setTxtProgressBar(pb, i)
   }
+  close(pb)
 
   updated <- new.intensities[[1]]
   for(i in 2:(length(channels))){
