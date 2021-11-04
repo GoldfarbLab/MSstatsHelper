@@ -16,78 +16,87 @@
 sitesToEvidence <- function(sites, evidence, proteinGroups) {
 
   sites <- formatColNames(sites)
+  contains_sn <- max(str_detect(colnames(sites), "SN"))
   evidence <- formatColNames(evidence)
   proteinGroups <- formatColNames(proteinGroups)
 
   ##############################################################################
   ### sum together phosphosites into one intensity column
   ##############################################################################
-  ## this all worked for singular TMT plexes but doesn't work for multiple/multiple experiments.
-  # I need to transform the separate columns for experiment abundances into rows with the experiment labeled
-  # for intensity, intensity corrected, SN, Is.missing
+  message("\n** Merging data from site level to peptide level")
+  map <- sites %>%
+    select(id, Evidence.IDs, Proteins, Protein.group.IDs)
 
-  r.i.cols <- colnames(sites)[grep("Reporter\\.intensity\\.([0-9]*)\\.", colnames(sites))]
-  experiments <- unique(str_match(r.i.cols, pattern = "(Reporter\\.intensity\\.([0-9]*)\\.)(.*)(___([0-9]*))")[,4])
-  channels <- unique(str_match(r.i.cols, pattern = "(Reporter\\.intensity\\.([0-9]*)\\.)(.*)(___([0-9]*))")[,3])
+  sn.cols <- colnames(sites)[grep("SN\\.", colnames(sites))]
+  is.missing.cols <- colnames(sites)[grep("Is\\.missing\\.", colnames(sites))]
+  r.i.c.cols <- colnames(sites)[grep("Reporter\\.intensity\\.corrected\\.", colnames(sites))]
+  r.i.cols <- colnames(sites)[grep("Reporter\\.intensity\\.", colnames(sites))]
+  loc.cols <- colnames(sites)[grep("Localization\\.prob\\.", colnames(sites))]
+  keep <- c(sn.cols, is.missing.cols, r.i.c.cols, r.i.cols, loc.cols)
 
-  new.intensities <- list()
+  # reformat data
+  cols.desc <- unique(tibble(cols = colnames(sites))) %>%
+    mutate(Experiment = str_match(cols, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,4],
+           Experiment = ifelse(is.na(Experiment), str_match(cols, pattern = "(Localization\\.prob\\.)(.*)")[,3], Experiment),
+           Channel = str_match(cols, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,3],
+           Column.type = str_c(str_match(cols, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,2]),
+           Column.type = ifelse(is.na(Column.type), 'Localization.prob', Column.type),
+           Phosphosite = str_match(cols, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,5],
+           Phosphosite = ifelse(is.na(Phosphosite), 1, Phosphosite)) %>%
+    # filter(!is.na(Experiment)) %>%
+    mutate(new.col.name = ifelse(is.na(Channel),
+                                 Column.type,
+                                 str_c(Column.type, ".", Channel))) %>%
+    select(-Channel, -Column.type) %>%
+    filter(!is.na(Experiment))
 
-  pb = txtProgressBar(max=length(channels), style=3)
-  for(i in 1:length(channels)){
+  sites <-  sites %>%
+    select(id, all_of(keep)) %>%
+    pivot_longer(cols = all_of(keep),
+                 values_to = "Value",
+                 names_to = 'old.name') %>%
+    inner_join(cols.desc, by = c('old.name' = 'cols')) %>%
+    filter(!is.na(Experiment)) %>%
+    select(-old.name) %>%
+    pivot_wider(names_from = new.col.name, values_from = Value)
 
-    # Grab column names for this particular channel
-    sn.cols <- colnames(sites)[grep(str_c("SN\\.", channels[i], "\\."), colnames(sites))]
-    is.missing.cols <- colnames(sites)[grep(str_c("Is\\.missing\\.", channels[i], '\\.'), colnames(sites))]
-    r.i.c.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.corrected\\.", channels[i], "\\."), colnames(sites))]
-    r.i.cols <- colnames(sites)[grep(str_c("Reporter\\.intensity\\.", channels[i],"\\."), colnames(sites))]
-    loc.cols <- colnames(sites)[grep(str_c("Localization\\.prob\\."), colnames(sites))]
+  filter.col <- colnames(sites)[grep("Is\\.missing\\.", colnames(sites))]
+  localization.col <- colnames(sites)[grep("Localization\\.prob", colnames(sites))]
+  reporter.corr.col <- colnames(sites)[grep("Reporter\\.intensity\\.corrected\\.", colnames(sites))]
+  reporter.col <- colnames(sites)[grep("Reporter\\.intensity\\.[0-9]+", colnames(sites))]
+  SN.col <- colnames(sites)[grep("SN\\.", colnames(sites))]
 
-    SN.col <- sym(str_c("SN.", channels[i]))
-    filter.col <- sym(str_c("Is.missing.", channels[i]))
-    reporter.corr.col <- sym(str_c("Reporter.intensity.corrected.", channels[i]))
-    reporter.col <- sym(str_c("Reporter.intensity.", channels[i]))
-
-    new.intensities[[i]] <-  sites %>%
-      select(id, all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols), all_of(loc.cols)) %>%
-      pivot_longer(cols = c(all_of(sn.cols), all_of(is.missing.cols), all_of(r.i.cols), all_of(r.i.c.cols), all_of(loc.cols)),
-                   values_to = "Value",
-                   names_to = 'old.name') %>%
-      mutate(Experiment = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,4],
-             Experiment = ifelse(is.na(Experiment), str_match(old.name, pattern = "(Localization\\.prob\\.)(.*)")[,3], Experiment),
-             Column.type = str_c(str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,2], ".", channels[i]),
-             Column.type = ifelse(is.na(Column.type), 'Localization.prob', Column.type),
-             Phosphosite = str_match(old.name, pattern = "(.*)\\.([0-9]*)\\.(.*)___([0-9]*)")[,5]) %>%
-      replace_na(list(Phosphosite=1)) %>%
-      select(-old.name) %>%
-      pivot_wider(names_from = Column.type, values_from = Value) %>%
-      replace_na(list(Localization.prob=0)) %>%
+  if(contains_sn){
+     summed <- sites %>%
       group_by(Experiment, id) %>%
-      summarise(!!SN.col := sum(!!SN.col),
-                !!reporter.col := sum(!!reporter.col),
-                !!reporter.corr.col := sum(!!reporter.corr.col),
-                !!filter.col := sum(!!filter.col),
-                Localization.prob = max(Localization.prob)) %>% ### because each peptide has only one localization prob
-      ungroup() %>%
-      filter(!!rlang::sym(filter.col) < 3)
+      summarise_at(c(all_of(SN.col), all_of(reporter.col),
+                   all_of(reporter.corr.col), all_of(filter.col)), funs(sum)) %>%
+       mutate_at(all_of(filter.col), funs(ifelse(. < 3, FALSE, TRUE)))
+                # Localization.prob = max(Localization.prob)) ### because each peptide has only one localization prob
 
-    setTxtProgressBar(pb, i)
-  }
-  close(pb)
-
-  updated <- new.intensities[[1]]
-  for(i in 2:(length(channels))){
-    updated <- updated %>%
-      full_join(new.intensities[[i]], by = c('id', 'Experiment'))
+     maxed <- sites %>%
+       group_by(Experiment, id) %>%
+       summarise_at(all_of(localization.col), funs(max), na.rm=TRUE) %>%
+       filter(!Localization.prob %in% c(-Inf, Inf))
   }
 
-  keep <- c(colnames(updated)[grep("Reporter.intensity.", colnames(updated))],
-            colnames(updated)[grep("Reporter.intensity.corrected,", colnames(updated))],
-            colnames(updated)[grep("SN.", colnames(updated))],
-            colnames(updated)[grep("Is.missing.", colnames(updated))])
+  else {
+    summed <- sites %>%
+      group_by(Experiment, id) %>%
+      summarise_at(c(all_of(reporter.col),
+                     all_of(reporter.corr.col), all_of(filter.col)), funs(sum)) %>%
+      mutate_at(all_of(filter.col), funs(ifelse(. < 3, 0, 1))) %>%
+      by_row(~ sum(is.na(.)), .collate = 'cols')
+    # Localization.prob = max(Localization.prob)) ### because each peptide has only one localization prob
 
-  sites <- sites %>%
-    left_join(updated, by = c('id')) %>%
-    select(all_of(keep), Evidence.IDs, id, Proteins, Localization.prob, Protein.group.IDs, Experiment)
+    maxed <- sites %>%
+      group_by(Experiment, id) %>%
+      summarise_at(all_of(localization.col), funs(max), na.rm=TRUE) %>%
+      filter(!Localization.prob %in% c(-Inf, Inf))
+  }
+
+  sites <- inner_join(summed, maxed, by=c('id', 'Experiment')) %>%
+    inner_join(map, by = 'id')
 
   ##############################################################################
   ### merge sites and evidence
@@ -96,9 +105,9 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
     rename('Phospho.STY.site.IDs' = 'id') %>%
     separate_rows(Evidence.IDs, sep = ';', convert=TRUE)
 
-  remove <- colnames(evidence)[grep("Reporter.intensity.", colnames(evidence))]
+  remove <- c(filter.col, reporter.col, reporter.corr.col, SN.col)
   evidence <- evidence %>%
-    select(-all_of(remove), -all_of(keep), -Proteins, -Protein.group.IDs) %>%
+    select(-all_of(remove), -Proteins, -Protein.group.IDs) %>%
     # select('Modified.sequence', 'Raw.file', 'Phospho..STY..site.IDs', 'id') %>%
     rename('Evidence.IDs' = 'id') %>%
     separate_rows(Phospho.STY.site.IDs, sep = ';', convert = TRUE)
