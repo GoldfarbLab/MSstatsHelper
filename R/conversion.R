@@ -54,27 +54,18 @@ sortByPattern <- function(x, pattern) {
 }
 
 mapToGene <- function(x, type = ""){
-  map <- invisible(mapped)
-  hash <- hash(keys = map$Entry, values = map$gene.name)
+  map <- invisible(map)
 
-  # x <- x[x != "" & x != " " & x != "character(0)" & x != "NULL"]
+  hash <- hash(keys = map$Entry, values = map$gene.name)
 
   pboptions(type = "timer", char = "=", style = 3)
   mapped_genes <- pbsapply(str_split(x, ";"), function(protein_ids) ## pbsapply instead of sapply so that there is a progress bar
   { ### creates list of protein names
 
-    # if(protein_ids == "" | protein_ids == ' '){
-    #   message(protein_ids)
-    #   return(NA)
-    # }
-
     genes <- sapply(str_match(protein_ids, "^[^-]*"), function(protein_id)
     { # individual protein level
 
-
-      # if(protein_id == " " | protein_id == ""){return("")}
       mapped_protein <- hash[[str_match(protein_id,"^[^_]*")]] # searches hash table
-
       mapped_protein <- mapped_protein[mapped_protein != "" & mapped_protein != " " &
                                          mapped_protein != "character(0)" & mapped_protein != "NULL"]
 
@@ -93,6 +84,41 @@ mapToGene <- function(x, type = ""){
 
   mapped_genes <- mapped_genes %>% replace_na("")
   return(trimws(mapped_genes))
+}
+
+mapToSpecies <- function(x, type = ""){
+  map <- invisible(map)
+
+  hash <- hash(keys = map$Entry, values = map$Organism)
+
+  pboptions(type = "timer", char = "=", style = 3)
+  mapped_species <- pbsapply(str_split(x, ";"), function(protein_ids) ## pbsapply instead of sapply so that there is a progress bar
+  { ### creates list of protein names
+
+    species <- sapply(str_match(protein_ids, "^[^-]*"), function(protein_id)
+    { # individual protein level
+
+      mapped_species <- hash[[str_match(protein_id,"^[^_]*")]] # searches hash table
+
+      mapped_species <- mapped_species[mapped_species != "" & mapped_species != " " &
+                                         mapped_species != "character(0)" & mapped_species != "NULL"]
+
+      return(as.character(mapped_species)) # returns gene
+
+    })
+
+    if(type == "unique")
+    { # for use in the Gene.names column, not for appending PTMs to name
+        species <- unique(species)
+    }
+
+    species <- species[species != "" & species != " " & species != "character(0)" & species != "NULL"] # cleaning out non-matches
+
+    return(str_c(species, collapse = ";", sep = NULL)) # returns list of genes for one row of proteins
+  })
+
+  mapped_species <- mapped_species %>% replace_na("")
+  return(trimws(mapped_species))
 }
 
 update.gene.names <- function(df) {
@@ -183,7 +209,7 @@ checkReferenceImputation <- function(df, type = 'ev', annotation, summary = ''){
 }
 
 removeFewMeas <- function(df, min_measure = 3){
-  is.missing.cols <- is.missing.cols <- colnames(df)[grep("Is\\.missing\\.", colnames(df))]
+  is.missing.cols <- colnames(df)[grep("Is\\.missing\\.", colnames(df))]
 
   df <- df %>%
     rowwise %>%
@@ -223,7 +249,7 @@ prepareForMSstats <- function (phosphosites = '',
   protein_groups <- formatColNames(protein_groups)
 
   message("\n** Removing peptides with few measurements")
-  global_evidence <- removeFeaMeas(global_evidence, min_measure=min_measure)
+  global_evidence <- removeFewMeas(global_evidence, min_measure=min_measure)
   # if(max(str_detect(tolower(global_annotation$Condition), "norm"))){
   #   message("** Reference channel found in whole cell data.")
   #   global_evidence <- checkReferenceImputation(global_evidence, annotation = global_annotation, type = 'ev')
@@ -352,7 +378,7 @@ prepareForMSstats <- function (phosphosites = '',
 
     phosphostes <- phosphosites %>% filter(Localization.prob > 0.75)
     message("\n** Removing phosphosites with few measurements")
-    phosphosites <- removeFeaMeas(phosphosites, min_measure=min_measure)
+    phosphosites <- removeFewMeas(phosphosites, min_measure=min_measure)
 
     return(list("GlobalEvidence" = global_evidence, "Sites" = phosphosites, "ProteinGroups" = phospho.as.evidence$proteinGroups))
   }
@@ -370,12 +396,12 @@ prepareForMSstats <- function (phosphosites = '',
       filter(`Peptide.is.razor` == "True") %>%
       select(`Peptide.IDs`, `id`, `Protein.IDs`) %>%
       mutate(Genes = mapToGene(Protein.IDs, "unique"),
-             Protein.IDs = str_replace_all(Protein.IDs, ';', '-'))
+             Protein.IDs = str_replace_all(Protein.IDs, ';', '--'))
 
     message("\n** Changing protein names to protein group names.")
     global_evidence <- global_evidence %>%
       separate_rows(`Protein.group.IDs`, sep=";", convert=T) %>%
-      mutate(`Protein.group.IDs` = as.numeric(`Protein.group.IDs`)) %>%
+      separate_rows(`Peptide.ID`, sep=";", convert=T) %>%
       inner_join(razor.peptide.ids, by=c("Peptide.ID" = "Peptide.IDs", "Protein.group.IDs" = "id")) %>%
       # mutate(Proteins = Protein.IDs)
       # mutate(Proteins = str_c('pg', Protein.group.IDs, "-", Protein.IDs))
@@ -406,7 +432,7 @@ prepareForMSstats <- function (phosphosites = '',
     phosphosites <- phosphosites %>% filter(Localization.prob > 0.75)
 
     message("\n** Removing phosphosites with few measurements")
-    phosphosites <- removeFeaMeas(phosphosites, min_measure=min_measure)
+    phosphosites <- removeFewMeas(phosphosites, min_measure=min_measure)
 
     return(list("GlobalEvidence" = global_evidence, "Sites" = phosphosites, "ProteinGroups" = phospho.as.evidence$proteinGroups))
   }
