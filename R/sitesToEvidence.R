@@ -1,19 +1,15 @@
 #' Changes MaxQuant's phosphosites (STY) file so that it can be used in place of evidence.txt in the MSstats Pipeline
 #'
-#' @param df tibble or data frame with Proteins and Gene names columns, e.g. evidence or sites tables from MaxQuant
+#' @param sites output by TMTPurityCorrection
+#' @param evidence of phosphosites file. Filter evidence output of TMTPurityCorrection into phosphosite enriched files only.
+#' @param proteinGroups output by TMTPurityCorrection
+#' @param profile boolean specifying if data was made in profile mode. If TRUE, all data frames should be MQ output, not TMTpurityCorrection
 #'
 #' @export
+#' @returns sites file converted into evidence format and proteinGroups file to be used in running phosphosites file in MQ
 #' @examples
-#' \dontrun{
-#' sites <- read_tsv("Phospho (STY)Sites.txt", sep = '\t')
-#' evidence <- read.delim("evidence.txt", sep = '\t')
-#'
-#' new_sites <- sitesToEvidence(sites, evidence)
-#' }
-#'
 #' @import dplyr
-
-sitesToEvidence <- function(sites, evidence, proteinGroups) {
+sitesToEvidence <- function(sites, evidence, proteinGroups, profile) {
 
   sites <- formatColNames(sites)
   contains_sn <- max(str_detect(colnames(sites), "SN"))
@@ -66,7 +62,22 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
   reporter.col <- colnames(sites)[grep("Reporter\\.intensity\\.[0-9]+", colnames(sites))]
   SN.col <- colnames(sites)[grep("SN\\.", colnames(sites))]
 
-  if(contains_sn){
+  if(profile | is.null(dim(filter.col))){
+    message("\n\"Is missing\" column not found. If not run in profile mode, check imputation and TMT purity correction.")
+    summed <- sites %>%
+      group_by(Experiment, id) %>%
+      summarise_at(c(all_of(reporter.col),
+                     all_of(reporter.corr.col)), funs(sum)) %>%
+      mutate_at(all_of(filter.col), funs(ifelse(. < 3, FALSE, TRUE)))
+    # Localization.prob = max(Localization.prob)) ### because each peptide has only one localization prob
+
+    maxed <- sites %>%
+      group_by(Experiment, id) %>%
+      summarise_at(all_of(localization.col), funs(max), na.rm=TRUE) %>%
+      filter(!Localization.prob %in% c(-Inf, Inf))
+  }
+
+  else if(contains_sn){
      summed <- sites %>%
       group_by(Experiment, id) %>%
       summarise_at(c(all_of(SN.col), all_of(reporter.col),
@@ -95,9 +106,9 @@ sitesToEvidence <- function(sites, evidence, proteinGroups) {
       filter(!Localization.prob %in% c(-Inf, Inf))
   }
 
+
   sites <- inner_join(summed, maxed, by=c('id', 'Experiment')) %>%
     inner_join(map, by = 'id')
-
   ##############################################################################
   ### merge sites and evidence
   ##############################################################################
