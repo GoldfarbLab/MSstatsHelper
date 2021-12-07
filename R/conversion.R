@@ -271,9 +271,12 @@ prepareForMSstats <- function (phosphosites = '',
     return()
   }
 
+  if(profile_mode){
+    message("Data was run in profile mode. Filtering by missingness will not be performed.")
+  }
+
   # filter out rows with too many missing values
   # message("\n** Removing rows with too many missing values from evidence file")
-
   global_evidence <- formatColNames(global_evidence)
   protein_groups <- formatColNames(protein_groups)
 
@@ -401,14 +404,19 @@ prepareForMSstats <- function (phosphosites = '',
     phospho.as.evidence <- sitesToEvidence(phosphosites, evidence = phospho_evidence, proteinGroups = protein_groups, profile_mode)
     phosphosites <- phospho.as.evidence$Sites
 
-    if(max(str_detect(tolower(phospho_annotation$Condition), "norm"))){
+    if(!profile_mode & max(str_detect(tolower(phospho_annotation$Condition), "norm"))){
       message("** Reference channel found.")
       phosphosites <- checkReferenceImputation(phosphosites, annotation = phospho_annotation, type = 'ph', profile_mode)
     }
 
-    phosphostes <- phosphosites %>% filter(Localization.prob > 0.75)
-    message("\n** Removing phosphosites with few measurements")
-    phosphosites <- removeFewMeas(phosphosites, min_measure=min_measure, profile_mode)
+    phosphosites <- phosphosites %>% filter(Localization.prob > 0.75)
+
+
+    if(!profile_mode){
+      message("\n** Removing phosphosites with few measurements")
+      phosphosites <- removeFewMeas(phosphosites, min_measure=min_measure, profile_mode)
+    }
+
 
     return(list("GlobalEvidence" = global_evidence, "Sites" = phosphosites, "ProteinGroups" = phospho.as.evidence$proteinGroups))
   }
