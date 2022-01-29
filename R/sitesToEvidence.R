@@ -62,7 +62,7 @@ sitesToEvidence <- function(sites, evidence, proteinGroups, profile) {
   reporter.col <- colnames(sites)[grep("Reporter\\.intensity\\.[0-9]+", colnames(sites))]
   SN.col <- colnames(sites)[grep("SN\\.", colnames(sites))]
 
-  if(profile | is.null(dim(filter.col))){
+  if(profile){
     message("\n\"Is missing\" column not found. If not run in profile mode, check imputation and TMT purity correction.")
     summed <- sites %>%
       group_by(Experiment, id) %>%
@@ -109,12 +109,15 @@ sitesToEvidence <- function(sites, evidence, proteinGroups, profile) {
 
   sites <- inner_join(summed, maxed, by=c('id', 'Experiment')) %>%
     inner_join(map, by = 'id')
+
   ##############################################################################
   ### merge sites and evidence
   ##############################################################################
   sites <- sites %>%
+    filter(!str_detect(Protein.group.IDs, ';')) %>%
     rename('Phospho.STY.site.IDs' = 'id') %>%
     separate_rows(Evidence.IDs, sep = ';', convert=TRUE)
+
 
   remove <- c(filter.col, reporter.col, reporter.corr.col, SN.col)
   evidence <- evidence %>%
@@ -140,7 +143,7 @@ sitesToEvidence <- function(sites, evidence, proteinGroups, profile) {
   ### update Evidence ID in the proteinGroups table
   ##############################################################################
   map <- input %>%
-    # filter(!str_detect(Protein.group.IDs, ';')) %>%
+    filter(!str_detect(Protein.group.IDs, ';')) %>%
     select(Protein.group.IDs, id) %>%
     separate_rows(Protein.group.IDs, sep=';', convert=TRUE) %>%
     unique() %>%

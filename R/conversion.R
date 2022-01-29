@@ -121,17 +121,22 @@ addSitesToNames <- function(ids, positions, amino_acid) {
 #' @examples
 #'
 #' @import dplyr
-addSitesToGeneNames <- function(ids, positions, amino_acid) {
+addSitesToGeneNames <- function(ids, genes, positions, amino_acid) {
   split_ids <- str_split(ids, ";")
-  split_genes <- str_split(mapToGene(ids), ";") # returns redundant list of genes but it's unsorted
+  split_genes <- str_split(mapToGene(ids, "nonunique"), ";") # returns redundant list of genes but it's unsorted
 
   # message("\n== Getting gene names for gene based identifiers")
   genes_and_ids <- mapply(function(protein, gene) {
+
+    if(length(protein) != length(gene)){
+      gene <- rep("ERROR", (length(protein)))
+    }
+
     str_c(gene, "_", protein, collapse = ';')
   }, protein = split_ids, gene = split_genes)
 
   # returning only id column
-  return(addSitesToNames(genes_and_ids, positions, amino_acid))
+  return(genes_and_ids)
 }
 
 #' if annotation file contains a reference channel, the input data is filtered so that each row in evidence file contains a non-missing value for at least one reference channel
@@ -147,12 +152,13 @@ addSitesToGeneNames <- function(ids, positions, amino_acid) {
 #' @import dplyr
 checkReferenceImputation <- function(df, type = 'ev', annotation, profile){
   if(type == 'ev'){
-    message("\n** Removing peptides missing in each reference channel from evidence file.")
+
     if(profile){
 
     }
 
     else{
+      message("\n** Removing peptides missing in each reference channel from evidence file.")
       annotation <- annotation %>%
         filter(str_detect(tolower(Condition), 'norm')) %>%
         mutate(number = str_c("Is.missing.", str_match(Channel, "(.*)\\.([0-9]*)")[,3]))
@@ -170,14 +176,15 @@ checkReferenceImputation <- function(df, type = 'ev', annotation, profile){
 
   }
 
-  else if(type == 'ph'){ ### only do this AFTER conveting sites file to evidence
-    message("\n** Removing phosphosites missing in each reference channel from sites file.")
+  else if(type == 'ph'){ ### only do this AFTER converting sites file to evidence
+
 
     if(profile){
 
     }
 
     else{
+      message("\n** Removing phosphosites missing in each reference channel from sites file.")
       annotation <- annotation %>%
         filter(str_detect(tolower(Condition), 'norm')) %>%
         mutate(number = str_c("Is.missing.", str_match(Channel, "(.*)\\.([0-9]*)")[,3]))
@@ -214,8 +221,7 @@ checkReferenceImputation <- function(df, type = 'ev', annotation, profile){
 #' @import dplyr
 removeFewMeas <- function(df, min_measure = 3, profile){
   if(profile){
-    df <- df %>%
-      filter(rowSums(across(matches("Reporter.intensity.corrected.\\d+"), function(x) x > 0)) >= min_measure)
+
   }
 
   else{
@@ -231,8 +237,6 @@ removeFewMeas <- function(df, min_measure = 3, profile){
 
 }
 
-#'
-#'
 #' @param phosphosites tibble or data frame of phosphosites file output by TMTPurityCorrection package
 #' @param phospho_annotation tibble or data frame of phospho data's annotation file
 #' @param global_annotation tibble or data frame of global data's annotation file
@@ -327,6 +331,34 @@ prepareForMSstats <- function (phosphosites = '',
     message("\n** Sorting gene and protein names for the phosphosites file")
     phosphosites <- sortIdentifiers(phosphosites)
 
+    ############################ test
+    message("\n** Selecting razor peptides")
+    razor.peptide.ids <- protein_groups %>%
+      filter(!Protein.IDs %in% c("", " ", "NULL")) %>%
+      filter(is.na(Reverse)) %>%
+      filter(is.na(Potential.contaminant)) %>%
+      select(`Peptide.is.razor`, `Peptide.IDs`, `id`, `Protein.IDs`) %>%
+      separate_rows(c(`Peptide.is.razor`, `Peptide.IDs`), sep=";", convert=T) %>%
+      filter(`Peptide.is.razor` == "True") %>%
+      select(`Peptide.IDs`, `id`, `Protein.IDs`) %>%
+      mutate(Genes = mapToGene(Protein.IDs, "unique"),
+             Protein.IDs = str_replace_all(Protein.IDs, ';', '--'))
+
+    global_evidence <- global_evidence %>%
+      separate_rows(`Protein.group.IDs`, sep=";", convert=T) %>%
+      separate_rows(`Peptide.ID`, sep=";", convert=T) %>%
+      inner_join(razor.peptide.ids, by=c("Peptide.ID" = "Peptide.IDs", "Protein.group.IDs" = "id"))
+
+    phosphosites <- phosphosites %>%
+      filter(Proteins != "") %>%
+      separate_rows(`Protein.group.IDs`, sep=";", convert=T) %>%
+      separate_rows(`Peptide.IDs`, sep=";", convert=T) %>%
+      # mutate(`Peptide.IDs` = as.numeric(`Peptide.IDs`)) %>%
+      inner_join(razor.peptide.ids, by=c("Peptide.IDs" = "Peptide.IDs", "Protein.group.IDs" = "id")) %>%
+      group_by(id) %>%
+      slice(1)
+    ############################ end of test
+
     message("\n** Classifying identifer type for Protein/Gene normalization")
     matching_phospho_protein <- phosphosites %>%
       inner_join(global_evidence, by = c("Sorted Proteins")) %>%
@@ -376,13 +408,27 @@ prepareForMSstats <- function (phosphosites = '',
     message("\n** Updating identifiers in phosphosites table")
     phosphosites_protein <- phosphosites %>%
       filter(id %in% matching_phospho_protein$id.x) %>%
-      mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
-      mutate("matched_ids" = sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)"))
+      mutate("matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid),
+             "matched_ids" = sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)"))
+
 
     phosphosites_genes <- phosphosites %>%
-      filter(id %in% matching_phospho_gene$id.x) %>%
-      mutate("matched_ids" = addSitesToGeneNames(Proteins, Positions.within.proteins, Amino.acid)) %>%
-      mutate("matched_ids" = sortByPattern(matched_ids, pattern = "(^[^_]*)_([^_]*)_([^_]*)"))
+      filter(id %in% matching_phospho_gene$id.x) #%>%
+        # mutate("matched_ids" = addSitesToGeneNames(Proteins, gene_list, Positions.within.proteins, Amino.acid),
+        #        "matched_ids" = addSitesToNames(Proteins, Positions.within.proteins, Amino.acid),
+        #        "matched_ids" = sortByPattern(full, pattern = "(^[^_]*)_([^_]*)_([^_]*)"))
+
+    gene_pairs <- addSitesToGeneNames(phosphosites_genes$Proteins,
+                                      gene_list,
+                                      phosphosites_genes$Positions.within.proteins,
+                                      phosphosites_genes$Amino.acid)
+    fully_anntated <- addSitesToNames(gene_pairs,
+                                      phosphosites_genes$Positions.within.proteins,
+                                      phosphosites_genes$Amino.acid)
+    sorted <- sortByPattern(fully_anntated, pattern = "(^[^_]*)_([^_]*)_([^_]*)")
+
+    phosphosites_genes <- cbind(phosphosites_genes, "matched_ids"=sorted) %>%
+      filter(!str_detect(matched_ids, "ERROR"))
 
     phosphosites_no_match <- phosphosites %>%
       filter(id %in% not_matching_phospho$id.x) %>%
@@ -429,6 +475,8 @@ prepareForMSstats <- function (phosphosites = '',
     message("\n== Updating Gene names in Protein Groups file.")
     razor.peptide.ids <- protein_groups %>%
       filter(!Protein.IDs %in% c("", " ", "NULL")) %>%
+      filter(is.na(Reverse)) %>%
+      filter(is.na(Potential.contaminant)) %>%
       select(`Peptide.is.razor`, `Peptide.IDs`, `id`, `Protein.IDs`) %>%
       separate_rows(c(`Peptide.is.razor`, `Peptide.IDs`), sep=";", convert=T) %>%
       filter(`Peptide.is.razor` == "True") %>%
@@ -444,8 +492,8 @@ prepareForMSstats <- function (phosphosites = '',
       # mutate(Proteins = Protein.IDs)
       mutate(Proteins = str_c('pg', Protein.group.IDs)) %>%
       mutate(Proteins = Protein.group.IDs)
-
     phosphosites <- phosphosites %>%
+
       filter(Proteins != "") %>%
       separate_rows(`Protein.group.IDs`, sep=";", convert=T) %>%
       separate_rows(`Peptide.IDs`, sep=";", convert=T) %>%

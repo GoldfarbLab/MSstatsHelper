@@ -39,8 +39,15 @@ mapToGene <- function(x, type = ""){
     { # individual protein level
 
       mapped_protein <- hash[[str_match(protein_id,"^[^_]*")]] # searches hash table
-      mapped_protein <- mapped_protein[mapped_protein != "" & mapped_protein != " " &
-                                         mapped_protein != "character(0)" & mapped_protein != "NULL"]
+
+      if(tolower(type) == "oto"){
+        mapped_protein[mapped_protein != "" | mapped_protein != "character(0)" | mapped_protein != "NULL"] = " "
+      }
+
+      else{
+        mapped_protein <- mapped_protein[mapped_protein != "" & mapped_protein != " " &
+                                           mapped_protein != "character(0)" & mapped_protein != "NULL"]
+      }
 
       return(as.character(mapped_protein)) # returns gene
     })
@@ -50,13 +57,14 @@ mapToGene <- function(x, type = ""){
       genes <- unique(genes)
     }
 
+
     genes <- genes[genes != "" & genes != " " & genes != "character(0)" & genes != "NULL"] # cleaning out non-matches
 
     return(str_c(genes, collapse = ";", sep = NULL)) # returns list of genes for one row of proteins
   })
 
-  mapped_genes <- mapped_genes %>% replace_na("")
-  return(trimws(mapped_genes))
+  mapped_genes <- tibble(mapped_genes)
+  return(trimws(mapped_genes$mapped_genes))
 }
 
 #' Given the protein name column, returns corresponding organisms listed with a ';'

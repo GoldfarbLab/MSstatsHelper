@@ -4,13 +4,6 @@
 #'
 #' @export
 #' @examples
-#' \dontrun{
-#' sites <- read_tsv("Phospho (STY)Sites.txt", sep = '\t')
-#' evidence <- read.delim("evidence.txt", sep = '\t')
-#'
-#' new_sites <- sitesToEvidence(sites, evidence)
-#' }
-#'
 #' @import dplyr
 
 cleanOutput <- function(comparison, protein_groups, names_col = 'Protein', level = 'p', normalization = ''){
@@ -42,8 +35,10 @@ cleanOutput <- function(comparison, protein_groups, names_col = 'Protein', level
 
     df <- df %>%
       filter(Site != Protein_quantified) %>%
-      mutate("Genes_in_protein" = mapToGene(Protein_quantified, "unique"),
-             "Species_in_protein" = mapToSpecies(Protein_quantified, "unique"))
+      mutate("Genes_in_pg" = mapToGene(Protein_quantified, "unique"),
+             "Genes_in_protein" = Genes_in_pg,
+             "Species_in_pg" = mapToSpecies(Protein_quantified, "unique"),
+             Species_in_protein = Species_in_pg)
 
     return(df)
   }
@@ -66,9 +61,11 @@ cleanOutput <- function(comparison, protein_groups, names_col = 'Protein', level
         return(str_c(x, collapse = ';'))
       })) %>%
 
-      mutate(Genes_in_protein = mapToGene(Protein_quantified, 'unique'))
+      mutate(Genes_in_protein = mapToGene(Protein_quantified, 'unique'),
+             Species_in_protein = mapToSpecies(Protein_quantified, 'unique'))
 
     protein_groups <- formatColNames(protein_groups)
+
     razor.peptide.ids <- protein_groups %>%
       filter(!Protein.IDs %in% c("", " ", "NULL")) %>%
       select(`Peptide.is.razor`, `Peptide.IDs`, `id`, `Protein.IDs`) %>%
@@ -76,7 +73,7 @@ cleanOutput <- function(comparison, protein_groups, names_col = 'Protein', level
       filter(`Peptide.is.razor` == "True") %>%
       select(`id`, `Protein.IDs`) %>%
       mutate(Genes_in_pg = mapToGene(Protein.IDs, "unique"),
-             Proteins_in_pg = str_replace_all(Protein.IDs, ';', '-'),
+             Proteins_in_pg = Protein.IDs,
              Species_in_pg = mapToSpecies(Protein.IDs, 'unique')) %>%
       select(-Protein.IDs) %>%
       unique()
